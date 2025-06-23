@@ -1,66 +1,130 @@
-# import Dependencies
-# import pandas as pd
-from telethon import TelegramClient
-import csv
+import asyncio
+import nest_asyncio
 import os
-from dotenv import load_dotenv
-# Load environment variables once
-load_dotenv('F:/Telegram_E-commerce-_extractor-/api.env')
-api_id = os.getenv('API_ID')  
-api_hash = os.getenv('API_HASH')
-phone = os.getenv('PHONE')
-# Function to scrape data from a single channel
+import re
+from telethon import TelegramClient
+import pytesseract
+from PIL import Image
+import unicodedata
+import emoji
+import nltk
+from nltk.tokenize import word_tokenize
+# from nltk.normalize import word_normalize
+import pandas as pd
 
 
-async def scrape_channel(client, channel_username, writer, media_dir):
-    entity = await client.get_entity(channel_username)
-    channel_title = entity.title  # Extract the channel's title
-    async for message in client.iter_messages(entity, limit=10000):
-        media_path = None
-        if message.media and hasattr(message.media, 'photo'):
-            # Create a unique filename for the photo
-            filename = f"{channel_username}_{message.id}.jpg"
-            media_path = os.path.join(media_dir, filename)
-            # Download the media to the specified directory if it's a photo
-            await client.download_media(message.media, media_path)
+# Amharic text processing functions
+def amharic_tokenize(text):
+    """Tokenize Amharic text, handling Ethiopic script."""
+    text = re.sub(r'\s+', ' ', text)
+    tokens = word_tokenize(text)
+    return str(tokens)  # Convert to string for CSV storage
 
-        # Write the channel title along with other data
-        writer.writerow([channel_title, channel_username,
-                        message.id, message.message, message.date, media_path])
 
-# Initialize the client once
-client = TelegramClient('scraping_session', api_id, api_hash)
+def normalize_amharic(text):
+    """Normalize Amharic text, removing emojis and standardizing characters."""
+    text = emoji.replace_emoji(text, replace='')
+    text = unicodedata.normalize('NFC', text)
+    text = re.sub(r'[^\u1200-\u137F\s.,!?]', '', text)
+    return text.strip()
+
+
+def extract_image_text(image_path):
+    """Extract text from images using Tesseract OCR with Amharic support."""
+    try:
+        img = Image.open(image_path)
+        text = pytesseract.image_to_string(img, lang='amh')
+        return normalize_amharic(text)
+    except Exception as e:
+        print(f"Error extracting text from image: {e}")
+        return ""
+
+
+async def scrape_channel(client, channel_handle, output_dir):
+    """Scrape messages from a Telegram channel and save to CSV."""
+    try:
+        entity = await client.get_entity(channel_handle)
+        channel_name = entity.title.replace(
+            '/', '_')  # Sanitize for file paths
+        os.makedirs(os.path.join(output_dir, channel_name), exist_ok=True)
+
+        structured_data = []
+
+        # Fetch messages (limit to 100 for testing; adjust for production)
+        async for message in client.iter_messages(entity, limit=100):
+            if message.message or message.media:
+                data = {
+                    "channel": channel_name,
+                    "message_id": message.id,
+                    "sender_id": message.sender_id or '',
+                    "timestamp": message.date.isoformat(),
+                    "text": "",
+                    "tokens": "",
+                    "image_text": "",
+                    "media_path": ""
+                }
+
+                # Process text
+                if message.message:
+                    text = normalize_amharic(message.message)
+                    data["text"] = text
+                    data["tokens"] = amharic_tokenize(text)
+
+                # Process media (images)
+                if message.media and hasattr(message.media, 'photo'):
+                    media_path = os.path.join(
+                        output_dir, channel_name, f"image_{message.id}.jpg")
+                    await client.download_media(message.media, media_path)
+                    data["media_path"] = media_path
+                    data["image_text"] = extract_image_text(media_path)
+
+                structured_data.append(data)
+
+        # Save structured data to CSV
+        csv_path = os.path.join(output_dir, f"{channel_name}_data.csv")
+        df = pd.DataFrame(structured_data)
+        df.to_csv(csv_path, index=False, encoding='utf-8')
+        print(f"Data from {channel_name} saved to {csv_path}")
+
+    except Exception as e:
+        print(f"Error processing {channel_handle}: {e}")
 
 
 async def main():
-    await client.start()
+    # Telegram API credentials (replace with your own)
+    api_id = '29992189'  # Obtain from my.telegram.org
+    api_hash = 'f234baf39ded2ba05973aba75d9b9f71'
+    phone = '+251996665090'
 
-    # Create a directory for media files
-    media_dir = 'photos'
-    os.makedirs(media_dir, exist_ok=True)
+    # Output directory
+    output_dir = 'telegram_scraped_data'
+    os.makedirs(output_dir, exist_ok=True)
 
-    # Open the CSV file and prepare the writer
-    with open('telegram_data.csv', 'w', newline='', encoding='utf-8') as file:
-        writer = csv.writer(file)
-        writer.writerow([
-            'Channel Title', 'Channel Username', 'ID', 'Message',
-            'Date', 'Media Path'
-        ])  # Include channel title in the header
-        # List of channels to scrape
-        channels = [
-            '@Shageronlinestore',
-            '@ZemenExpress',
-            '@nevacomputer',
-            '@sinayelj',
-            '@Leyueqa',  # Existing channel
-            # we can add more channel here
+    # List of Telegram channels to scrape
+    channels = [
+        '@Shageronlinestore',
+        '@ZemenExpress',
+        '@nevacomputer',
+        '@sinayelj',
+        '@Leyueqa'
+    ]
 
-        ]
+    # Initialize Telegram client
+    async with TelegramClient('session_name', api_id, api_hash) as client:
+        # Authorize client
+        await client.start(phone)
+        print("Client connected successfully")
 
-        # Iterate over channels and scrape data into the single CSV file
+        # Scrape data from each channel
         for channel in channels:
-            await scrape_channel(client, channel, writer, media_dir)
-            print(f"Scraped data from {channel}")
+            await scrape_channel(client, channel, output_dir)
 
-with client:
-    client.loop.run_until_complete(main())
+# Download NLTK data for tokenization
+nltk.download('punkt', quiet=True)
+# Configure Tesseract path (update as needed)
+pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'  # Example path
+
+
+nest_asyncio.apply()
+
+asyncio.run(main())
