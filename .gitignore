@@ -2,3 +2,4 @@
 .vscode
 data
 api.env
+__pycache__
