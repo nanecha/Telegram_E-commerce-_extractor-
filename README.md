@@ -1,5 +1,5 @@
 # Building an Amharic E-commerce Data Extractor
-# Task-1  Data Ingestion and Preprocessing for Ethiopian Telegram E-commerce Channels
+#  Data Ingestion and Preprocessing for Ethiopian Telegram E-commerce Channels
 ## Overview
 This project implements Task 1 of the data pipeline for collecting and preprocessing data from Ethiopian-based Telegram e-commerce channels for Named Entity Recognition (NER). The script scrapes messages (text, images, and metadata) from specified Telegram channels, preprocesses Amharic text, extracts text from images using OCR, and saves the structured data to CSV files. The system is designed to handle Amharic-specific linguistic features and prepare data for subsequent NER labeling and model fine-tuning.
 # setups and Dependencies
